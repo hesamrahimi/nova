@@ -149,7 +149,7 @@ class API(base.Base):
         cinderclient(context).volumes.reserve(volume['id'])
 
     def unreserve_volume(self, context, volume):
-        cinderclient(context).volumes.reserve(volume['id'])
+        cinderclient(context).volumes.unreserve(volume['id'])
 
     def attach(self, context, volume, instance_uuid, mountpoint):
         cinderclient(context).volumes.attach(volume['id'],
@@ -170,8 +170,12 @@ class API(base.Base):
     def create(self, context, size, name, description, snapshot=None,
                volume_type=None, metadata=None, availability_zone=None):
 
+        if snapshot is not None:
+            snapshot_id = snapshot['id']
+        else:
+            snapshot_id = None
         item = cinderclient(context).volumes.create(size,
-                                                    snapshot,
+                                                    snapshot_id,
                                                     name,
                                                     description,
                                                     volume_type,

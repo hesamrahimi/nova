@@ -24,9 +24,6 @@ from nova.virt.baremetal import db
 
 class BareMetalPxeIpTestCase(base.BMDBTestCase):
 
-    def setUp(self):
-        super(BareMetalPxeIpTestCase, self).setUp()
-
     def test_unique_address(self):
         pif1_id = db.bm_interface_create(self.context, 1, '11:11:11:11:11:11',
                                          '0x1', 1)
@@ -38,7 +35,7 @@ class BareMetalPxeIpTestCase(base.BMDBTestCase):
         db.bm_interface_destroy(self.context, pif1_id)
         pif2_id = db.bm_interface_create(self.context, 2, '11:11:11:11:11:11',
                                          '0x2', 2)
-        self.assertTrue(pif2_id)
+        self.assertTrue(pif2_id is not None)
 
     def test_unique_vif_uuid(self):
         pif1_id = db.bm_interface_create(self.context, 1, '11:11:11:11:11:11',

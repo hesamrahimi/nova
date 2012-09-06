@@ -87,11 +87,8 @@ class HyperVDriver(driver.ComputeDriver):
     def list_instances(self):
         return self._vmops.list_instances()
 
-    def list_instances_detail(self):
-        return self._vmops.list_instances_detail()
-
-    def spawn(self, context, instance, image_meta, network_info,
-        block_device_info=None):
+    def spawn(self, context, instance, image_meta, injected_files,
+              admin_password, network_info=None, block_device_info=None):
         self._vmops.spawn(context, instance, image_meta, network_info,
             block_device_info)
 

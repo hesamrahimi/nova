@@ -776,6 +776,11 @@ class FlavorNotFound(NotFound):
     message = _("Flavor %(flavor_id)s could not be found.")
 
 
+class FlavorAccessNotFound(NotFound):
+    message = _("Flavor access not found for %(flavor_id) / "
+                "%(project_id) combination.")
+
+
 class SchedulerHostFilterNotFound(NotFound):
     message = _("Scheduler Host Filter %(filter_name)s could not be found.")
 
@@ -849,12 +854,21 @@ class InstanceTypeExists(Duplicate):
     message = _("Instance Type %(name)s already exists.")
 
 
+class FlavorAccessExists(Duplicate):
+    message = _("Flavor access alreay exists for flavor %(flavor_id)s "
+                "and project %(project_id)s combination.")
+
+
 class VolumeTypeExists(Duplicate):
     message = _("Volume Type %(name)s already exists.")
 
 
 class InvalidSharedStorage(NovaException):
-    message = _("%(path)s is on shared storage: %(reason)s")
+    message = _("%(path)s is not on shared storage: %(reason)s")
+
+
+class InvalidLocalStorage(NovaException):
+    message = _("%(path)s is not on local storage: %(reason)s")
 
 
 class MigrationError(NovaException):
@@ -1059,6 +1073,11 @@ class InstanceUserDataTooLarge(NovaException):
 
 class InstanceUserDataMalformed(NovaException):
     message = _("User data needs to be valid base 64.")
+
+
+class UnexpectedTaskStateError(NovaException):
+    message = _("unexpected task state: expecting %(expected)s but "
+                "the actual state is %(actual)s")
 
 
 def get_context_from_function_and_args(function, args, kwargs):

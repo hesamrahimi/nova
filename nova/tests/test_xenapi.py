@@ -146,10 +146,11 @@ class XenAPIVolumeTestCase(stubs.XenAPITestBase):
         self.user_id = 'fake'
         self.project_id = 'fake'
         self.context = context.RequestContext(self.user_id, self.project_id)
-        self.flags(xenapi_connection_url='test_url',
-                   xenapi_connection_password='test_pass',
+        self.flags(disable_process_locking=True,
                    firewall_driver='nova.virt.xenapi.firewall.'
-                                   'Dom0IptablesFirewallDriver')
+                                   'Dom0IptablesFirewallDriver',
+                   xenapi_connection_url='test_url',
+                   xenapi_connection_password='test_pass')
         db_fakes.stub_out_db_instance_api(self.stubs)
         self.instance_values = {'id': 1,
                   'project_id': self.user_id,
@@ -260,11 +261,12 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
     def setUp(self):
         super(XenAPIVMTestCase, self).setUp()
         self.network = importutils.import_object(FLAGS.network_manager)
-        self.flags(xenapi_connection_url='test_url',
-                   xenapi_connection_password='test_pass',
+        self.flags(disable_process_locking=True,
                    instance_name_template='%d',
                    firewall_driver='nova.virt.xenapi.firewall.'
-                                   'Dom0IptablesFirewallDriver')
+                                   'Dom0IptablesFirewallDriver',
+                   xenapi_connection_url='test_url',
+                   xenapi_connection_password='test_pass',)
         xenapi_fake.create_local_srs()
         xenapi_fake.create_local_pifs()
         db_fakes.stub_out_db_instance_api(self.stubs)
@@ -1030,14 +1032,6 @@ class XenAPIMigrateInstance(stubs.XenAPITestBase):
         conn._vmops._resize_instance(instance,
                                      {'uuid': vdi_uuid, 'ref': vdi_ref})
         self.assertEqual(called['resize'], True)
-
-    def test_migrate_disk_and_power_off(self):
-        instance = db.instance_create(self.context, self.instance_values)
-        xenapi_fake.create_vm(instance.name, 'Running')
-        instance_type = db.instance_type_get_by_name(self.context, 'm1.large')
-        conn = xenapi_conn.XenAPIDriver(False)
-        conn.migrate_disk_and_power_off(self.context, instance,
-                                        '127.0.0.1', instance_type, None)
 
     def test_migrate_disk_and_power_off(self):
         instance = db.instance_create(self.context, self.instance_values)
@@ -2534,3 +2528,66 @@ class XenAPIInjectMetadataTestCase(stubs.XenAPITestBase):
                     'vm-data/user-metadata/c': '3',
                     },
                 })
+
+
+class VMOpsTestCase(test.TestCase):
+    def _get_mock_session(self, product_brand, product_version):
+        class Mock(object):
+            pass
+
+        mock_session = Mock()
+        mock_session.product_brand = product_brand
+        mock_session.product_version = product_version
+
+        return mock_session
+
+    def test_check_resize_func_name_defaults_to_VDI_resize(self):
+        session = self._get_mock_session(None, None)
+        ops = vmops.VMOps(session)
+
+        self.assertEquals(
+            'VDI.resize',
+            ops.check_resize_func_name())
+
+
+class XenAPISessionTestCase(test.TestCase):
+    def _get_mock_xapisession(self, software_version):
+        class XcpXapiSession(xenapi_conn.XenAPISession):
+            def __init__(_ignore):
+                "Skip the superclass's dirty init"
+
+            def _get_software_version(_ignore):
+                return software_version
+
+        return XcpXapiSession()
+
+    def test_get_product_version_product_brand_does_not_fail(self):
+        session = self._get_mock_xapisession({
+                    'build_number': '0',
+                    'date': '2012-08-03',
+                    'hostname': 'komainu',
+                    'linux': '3.2.0-27-generic',
+                    'network_backend': 'bridge',
+                    'platform_name': 'XCP_Kronos',
+                    'platform_version': '1.6.0',
+                    'xapi': '1.3',
+                    'xen': '4.1.2',
+                    'xencenter_max': '1.10',
+                    'xencenter_min': '1.10'
+                })
+
+        self.assertEquals(
+            (None, None),
+            session._get_product_version_and_brand()
+        )
+
+    def test_get_product_version_product_brand_xs_6(self):
+        session = self._get_mock_xapisession({
+                    'product_brand': 'XenServer',
+                    'product_version': '6.0.50'
+                })
+
+        self.assertEquals(
+            ((6, 0, 50), 'XenServer'),
+            session._get_product_version_and_brand()
+        )

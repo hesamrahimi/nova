@@ -46,7 +46,9 @@ def fake_get_instance_type_by_flavor_id(flavorid):
         'extra_specs': {},
         'deleted_at': None,
         'vcpu_weight': None,
-        'id': 7
+        'id': 7,
+        'is_public': True,
+        'disabled': False,
     }
 
 
@@ -55,7 +57,7 @@ def fake_destroy(flavorname):
 
 
 def fake_create(name, memory_mb, vcpus, root_gb, ephemeral_gb,
-                flavorid, swap, rxtx_factor):
+                flavorid, swap, rxtx_factor, is_public):
     newflavor = fake_get_instance_type_by_flavor_id(flavorid)
 
     newflavor["name"] = name
@@ -65,6 +67,7 @@ def fake_create(name, memory_mb, vcpus, root_gb, ephemeral_gb,
     newflavor["ephemeral_gb"] = int(ephemeral_gb)
     newflavor["swap"] = swap
     newflavor["rxtx_factor"] = float(rxtx_factor)
+    newflavor["is_public"] = bool(is_public)
 
     return newflavor
 
@@ -100,6 +103,7 @@ class FlavorManageTest(test.TestCase):
                 "id": 1234,
                 "swap": 512,
                 "rxtx_factor": 1,
+                "os-flavor-access:is_public": True,
             }
         }
 
@@ -108,6 +112,45 @@ class FlavorManageTest(test.TestCase):
         req.headers['Content-Type'] = 'application/json'
         req.method = 'POST'
         req.body = jsonutils.dumps(expected)
+        res = req.get_response(fakes.wsgi_app())
+        body = jsonutils.loads(res.body)
+        for key in expected["flavor"]:
+            self.assertEquals(body["flavor"][key], expected["flavor"][key])
+
+    def test_create_public_default(self):
+        flavor = {
+            "flavor": {
+                "name": "test",
+                "ram": 512,
+                "vcpus": 2,
+                "disk": 1,
+                "OS-FLV-EXT-DATA:ephemeral": 1,
+                "id": 1234,
+                "swap": 512,
+                "rxtx_factor": 1,
+            }
+        }
+
+        expected = {
+            "flavor": {
+                "name": "test",
+                "ram": 512,
+                "vcpus": 2,
+                "disk": 1,
+                "OS-FLV-EXT-DATA:ephemeral": 1,
+                "id": 1234,
+                "swap": 512,
+                "rxtx_factor": 1,
+                "os-flavor-access:is_public": True,
+            }
+        }
+
+        self.stubs.Set(instance_types, "create", fake_create)
+        url = '/v2/fake/flavors'
+        req = webob.Request.blank(url)
+        req.headers['Content-Type'] = 'application/json'
+        req.method = 'POST'
+        req.body = jsonutils.dumps(flavor)
         res = req.get_response(fakes.wsgi_app())
         body = jsonutils.loads(res.body)
         for key in expected["flavor"]:
@@ -124,11 +167,12 @@ class FlavorManageTest(test.TestCase):
                 "id": 1235,
                 "swap": 512,
                 "rxtx_factor": 1,
+                "os-flavor-access:is_public": True,
             }
         }
 
         def fake_create(name, memory_mb, vcpus, root_gb, ephemeral_gb,
-                        flavorid, swap, rxtx_factor):
+                        flavorid, swap, rxtx_factor, is_public):
             raise exception.InstanceTypeExists()
 
         self.stubs.Set(instance_types, "create", fake_create)

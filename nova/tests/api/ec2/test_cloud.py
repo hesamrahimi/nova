@@ -690,6 +690,27 @@ class CloudTestCase(test.TestCase):
         db.service_destroy(self.context, service1['id'])
         db.service_destroy(self.context, service2['id'])
 
+    def test_describe_availability_zones_verbose(self):
+        """Makes sure describe_availability_zones works and filters results."""
+        service1 = db.service_create(self.context, {'host': 'host1_zones',
+                                         'binary': "nova-compute",
+                                         'topic': 'compute',
+                                         'report_count': 0,
+                                         'availability_zone': "zone1"})
+        service2 = db.service_create(self.context, {'host': 'host2_zones',
+                                         'binary': "nova-compute",
+                                         'topic': 'compute',
+                                         'report_count': 0,
+                                         'availability_zone': "zone2"})
+
+        admin_ctxt = context.get_admin_context(read_deleted="no")
+        result = self.cloud.describe_availability_zones(admin_ctxt,
+                                                        zone_name='verbose')
+
+        self.assertEqual(len(result['availabilityZoneInfo']), 15)
+        db.service_destroy(self.context, service1['id'])
+        db.service_destroy(self.context, service2['id'])
+
     def test_describe_snapshots(self):
         """Makes sure describe_snapshots works and filters results."""
         vol = db.volume_create(self.context, {})
@@ -2069,7 +2090,7 @@ class CloudTestCase(test.TestCase):
         kwargs = {'image_id': 'ami-1',
                   'instance_type': FLAGS.default_instance_type,
                   'max_count': 1,
-                  'block_device_mapping': [{'device_name': '/dev/vdb',
+                  'block_device_mapping': [{'device_name': '/dev/sdb',
                                             'volume_id': vol1['id'],
                                             'delete_on_termination': True}]}
         ec2_instance_id = self._run_instance(**kwargs)
@@ -2081,7 +2102,7 @@ class CloudTestCase(test.TestCase):
         self.assertEqual(len(vols), 1)
         for vol in vols:
             self.assertEqual(vol['id'], vol1['id'])
-            self._assert_volume_attached(vol, instance_uuid, '/dev/vdb')
+            self._assert_volume_attached(vol, instance_uuid, '/dev/sdb')
 
         vol = db.volume_get(self.context, vol2['id'])
         self._assert_volume_detached(vol)
@@ -2092,7 +2113,7 @@ class CloudTestCase(test.TestCase):
                                              volume_id=vol2['id'],
                                              device='/dev/vdc')
         vol = db.volume_get(self.context, vol2['id'])
-        self._assert_volume_attached(vol, instance_uuid, '/dev/vdc')
+        self._assert_volume_attached(vol, instance_uuid, '/dev/sdc')
 
         self.cloud.compute_api.detach_volume(self.context,
                                              volume_id=vol1['id'])
@@ -2103,14 +2124,14 @@ class CloudTestCase(test.TestCase):
         self.assertTrue(result)
 
         vol = db.volume_get(self.context, vol2['id'])
-        self._assert_volume_attached(vol, instance_uuid, '/dev/vdc')
+        self._assert_volume_attached(vol, instance_uuid, '/dev/sdc')
 
         self.cloud.start_instances(self.context, [ec2_instance_id])
         vols = db.volume_get_all_by_instance_uuid(self.context, instance_uuid)
         self.assertEqual(len(vols), 1)
         for vol in vols:
             self.assertEqual(vol['id'], vol2['id'])
-            self._assert_volume_attached(vol, instance_uuid, '/dev/vdc')
+            self._assert_volume_attached(vol, instance_uuid, '/dev/sdc')
 
         vol = db.volume_get(self.context, vol1['id'])
         self._assert_volume_detached(vol)

@@ -25,9 +25,6 @@ from nova.virt.baremetal import db
 
 class BareMetalPxeIpTestCase(base.BMDBTestCase):
 
-    def setUp(self):
-        super(BareMetalPxeIpTestCase, self).setUp()
-
     def _create_pxe_ip(self):
         i1 = utils.new_bm_pxe_ip(address='10.1.1.1',
                                  server_address='10.1.1.101')
@@ -68,7 +65,7 @@ class BareMetalPxeIpTestCase(base.BMDBTestCase):
         i = utils.new_bm_pxe_ip(address='10.1.1.1',
                                 server_address='10.1.1.101')
         ref = db.bm_pxe_ip_create_direct(self.context, i)
-        self.assertTrue(ref)
+        self.assertTrue(ref is not None)
 
     def test_bm_pxe_ip_associate(self):
         self._create_pxe_ip()

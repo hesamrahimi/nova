@@ -101,12 +101,6 @@ def check_instance_lock(function):
     def inner(self, context, instance, *args, **kwargs):
         if instance['locked'] and not context.is_admin:
             raise exception.InstanceIsLocked(instance_uuid=instance['uuid'])
-        # NOTE(danms): at this point, we have verified that either
-        # the instance is not locked, or the user is sufficiently endowed
-        # that it doesn't matter. While the following statement may be
-        # interpreted as the "the instance is not locked", it actually
-        # refers to the whole condition.
-        context.instance_lock_checked = True
         return function(self, context, instance, *args, **kwargs)
     return inner
 
@@ -688,6 +682,16 @@ class API(base.Base):
             new_value = str(value)[:255]
             instance['system_metadata']['image_%s' % key] = new_value
 
+        # Keep a record of the original base image that this
+        # image's instance is derived from:
+        base_image_ref = image['properties'].get('base_image_ref')
+        if not base_image_ref:
+            # base image ref property not previously set through a snapshot.
+            # default to using the image ref as the base:
+            base_image_ref = base_options['image_ref']
+
+        instance['system_metadata']['image_base_image_ref'] = base_image_ref
+
         # Use 'default' security_group if none specified.
         if security_groups is None:
             security_groups = ['default']
@@ -826,6 +830,7 @@ class API(base.Base):
         if instance['host']:
             instance = self.update(context, instance,
                                    task_state=task_states.POWERING_OFF,
+                                   expected_task_state=None,
                                    deleted_at=timeutils.utcnow())
 
             self.compute_rpcapi.power_off_instance(context, instance)
@@ -842,6 +847,8 @@ class API(base.Base):
         host = instance['host']
         reservations = None
         try:
+
+            #Note(maoy): no expected_task_state needs to be set
             old, updated = self._update(context,
                                         instance,
                                         task_state=task_states.DELETING,
@@ -927,13 +934,16 @@ class API(base.Base):
         """Restore a previously deleted (but not reclaimed) instance."""
         if instance['host']:
             instance = self.update(context, instance,
-                        task_state=task_states.POWERING_ON, deleted_at=None)
+                        task_state=task_states.POWERING_ON,
+                        expected_task_state=None,
+                        deleted_at=None)
             self.compute_rpcapi.power_on_instance(context, instance)
         else:
             self.update(context,
                         instance,
                         vm_state=vm_states.ACTIVE,
                         task_state=None,
+                        expected_task_state=None,
                         deleted_at=None)
 
     @wrap_check_policy
@@ -953,7 +963,9 @@ class API(base.Base):
         LOG.debug(_("Going to try to stop instance"), instance=instance)
 
         instance = self.update(context, instance,
-                    task_state=task_states.STOPPING, progress=0)
+                    task_state=task_states.STOPPING,
+                    expected_task_state=None,
+                    progress=0)
 
         self.compute_rpcapi.stop_instance(context, instance, cast=do_cast)
 
@@ -965,7 +977,8 @@ class API(base.Base):
         LOG.debug(_("Going to try to start instance"), instance=instance)
 
         instance = self.update(context, instance,
-                               task_state=task_states.STARTING)
+                               task_state=task_states.STARTING,
+                               expected_task_state=None)
 
         # TODO(yamahata): injected_files isn't supported right now.
         #                 It is used only for osapi. not for ec2 api.
@@ -1173,6 +1186,13 @@ class API(base.Base):
             'image_type': image_type,
         }
 
+        # Persist base image ref as a Glance image property
+        system_meta = self.db.instance_system_metadata_get(
+                context, instance_uuid)
+        base_image_ref = system_meta.get('image_base_image_ref')
+        if base_image_ref:
+            properties['base_image_ref'] = base_image_ref
+
         sent_meta = {'name': name, 'is_public': False}
 
         if image_type == 'backup':
@@ -1218,13 +1238,21 @@ class API(base.Base):
     @check_instance_lock
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,
                                     vm_states.RESCUED],
-                          task_state=[None])
+                          task_state=[None, task_states.REBOOTING])
     def reboot(self, context, instance, reboot_type):
         """Reboot the given instance."""
+        if (reboot_type == 'SOFT' and
+            instance['task_state'] == task_states.REBOOTING):
+            raise exception.InstanceInvalidState(
+                attr='task_state',
+                instance_uuid=instance['uuid'],
+                state=instance['task_state'])
         state = {'SOFT': task_states.REBOOTING,
                  'HARD': task_states.REBOOTING_HARD}[reboot_type]
         instance = self.update(context, instance, vm_state=vm_states.ACTIVE,
-                               task_state=state)
+                               task_state=state,
+                               expected_task_state=[None,
+                                                    task_states.REBOOTING])
         self.compute_rpcapi.reboot_instance(context, instance=instance,
                 reboot_type=reboot_type)
 
@@ -1271,6 +1299,7 @@ class API(base.Base):
             # layer overhaul.
             sys_metadata = self.db.instance_system_metadata_get(context,
                     instance['uuid'])
+            orig_sys_metadata = dict(sys_metadata)
             # Remove the old keys
             for key in sys_metadata.keys():
                 if key.startswith('image_'):
@@ -1281,9 +1310,11 @@ class API(base.Base):
                 sys_metadata['image_%s' % key] = new_value
             self.db.instance_system_metadata_update(context,
                     instance['uuid'], sys_metadata, True)
+            return orig_sys_metadata
 
         instance = self.update(context, instance,
                                task_state=task_states.REBUILDING,
+                               expected_task_state=None,
                                # Unfortunately we need to set image_ref early,
                                # so API users can see it.
                                image_ref=image_href, progress=0, **kwargs)
@@ -1291,11 +1322,12 @@ class API(base.Base):
         # On a rebuild, since we're potentially changing images, we need to
         # wipe out the old image properties that we're storing as instance
         # system metadata... and copy in the properties for the new image.
-        _reset_image_metadata()
+        orig_sys_metadata = _reset_image_metadata()
 
         self.compute_rpcapi.rebuild_instance(context, instance=instance,
                 new_pass=admin_password, injected_files=files_to_inject,
-                image_ref=image_href, orig_image_ref=orig_image_ref)
+                image_ref=image_href, orig_image_ref=orig_image_ref,
+                orig_sys_metadata=orig_sys_metadata)
 
     @wrap_check_policy
     @check_instance_lock
@@ -1314,7 +1346,8 @@ class API(base.Base):
         reservations = self._reserve_quota_delta(context, deltas)
 
         instance = self.update(context, instance,
-                               task_state=task_states.RESIZE_REVERTING)
+                               task_state=task_states.RESIZE_REVERTING,
+                               expected_task_state=None)
 
         self.compute_rpcapi.revert_resize(context,
                 instance=instance, migration_id=migration_ref['id'],
@@ -1340,7 +1373,8 @@ class API(base.Base):
         reservations = self._reserve_quota_delta(context, deltas)
 
         instance = self.update(context, instance, vm_state=vm_states.ACTIVE,
-                               task_state=None)
+                               task_state=None,
+                               expected_task_state=None)
 
         self.compute_rpcapi.confirm_resize(context,
                 instance=instance, migration_id=migration_ref['id'],
@@ -1495,11 +1529,13 @@ class API(base.Base):
                                              resource=resource)
 
         instance = self.update(context, instance,
-                task_state=task_states.RESIZE_PREP, progress=0, **kwargs)
+                task_state=task_states.RESIZE_PREP,
+                expected_task_state=None,
+                progress=0, **kwargs)
 
         request_spec = {
                 'instance_type': new_instance_type,
-                'instance_uuids': instance['uuid'],
+                'instance_uuids': [instance['uuid']],
                 'instance_properties': instance}
 
         filter_properties = {'ignore_hosts': []}
@@ -1539,7 +1575,8 @@ class API(base.Base):
         self.update(context,
                     instance,
                     vm_state=vm_states.ACTIVE,
-                    task_state=task_states.PAUSING)
+                    task_state=task_states.PAUSING,
+                    expected_task_state=None)
         self.compute_rpcapi.pause_instance(context, instance=instance)
 
     @wrap_check_policy
@@ -1550,7 +1587,8 @@ class API(base.Base):
         self.update(context,
                     instance,
                     vm_state=vm_states.PAUSED,
-                    task_state=task_states.UNPAUSING)
+                    task_state=task_states.UNPAUSING,
+                    expected_task_state=None)
         self.compute_rpcapi.unpause_instance(context, instance=instance)
 
     @wrap_check_policy
@@ -1566,7 +1604,8 @@ class API(base.Base):
         self.update(context,
                     instance,
                     vm_state=vm_states.ACTIVE,
-                    task_state=task_states.SUSPENDING)
+                    task_state=task_states.SUSPENDING,
+                    expected_task_state=None)
         self.compute_rpcapi.suspend_instance(context, instance=instance)
 
     @wrap_check_policy
@@ -1577,7 +1616,8 @@ class API(base.Base):
         self.update(context,
                     instance,
                     vm_state=vm_states.SUSPENDED,
-                    task_state=task_states.RESUMING)
+                    task_state=task_states.RESUMING,
+                    expected_task_state=None)
         self.compute_rpcapi.resume_instance(context, instance=instance)
 
     @wrap_check_policy
@@ -1588,7 +1628,8 @@ class API(base.Base):
         self.update(context,
                     instance,
                     vm_state=vm_states.ACTIVE,
-                    task_state=task_states.RESCUING)
+                    task_state=task_states.RESCUING,
+                    expected_task_state=None)
 
         self.compute_rpcapi.rescue_instance(context, instance=instance,
                 rescue_password=rescue_password)
@@ -1601,7 +1642,8 @@ class API(base.Base):
         self.update(context,
                     instance,
                     vm_state=vm_states.RESCUED,
-                    task_state=task_states.UNRESCUING)
+                    task_state=task_states.UNRESCUING,
+                    expected_task_state=None)
         self.compute_rpcapi.unrescue_instance(context, instance=instance)
 
     @wrap_check_policy
@@ -1611,7 +1653,8 @@ class API(base.Base):
         """Set the root/admin password for the given instance."""
         self.update(context,
                     instance,
-                    task_state=task_states.UPDATING_PASSWORD)
+                    task_state=task_states.UPDATING_PASSWORD,
+                    expected_task_state=None)
 
         self.compute_rpcapi.set_admin_password(context,
                                                instance=instance,
@@ -1686,7 +1729,7 @@ class API(base.Base):
         #             will need to be removed along with the test if we
         #             change the logic in the manager for what constitutes
         #             a valid device.
-        if device and not re.match("^/dev/x{0,1}[a-z]d[a-z]+$", device):
+        if device and not block_device.match_device(device):
             raise exception.InvalidDevicePath(path=device)
         # NOTE(vish): This is done on the compute host because we want
         #             to avoid a race where two devices are requested at
@@ -1724,6 +1767,10 @@ class API(base.Base):
     def detach_volume(self, context, volume_id):
         """Detach a volume from an instance."""
         volume = self.volume_api.get(context, volume_id)
+        if volume['attach_status'] == 'detached':
+            msg = _("Volume must be attached in order to detach.")
+            raise exception.InvalidVolume(reason=msg)
+
         instance_uuid = volume['instance_uuid']
         instance = self.db.instance_get_by_uuid(context.elevated(),
                                                 instance_uuid)
@@ -1809,7 +1856,7 @@ class API(base.Base):
         LOG.debug(_("Going to try to live migrate instance"),
                   instance=instance)
         self.scheduler_rpcapi.live_migration(context, block_migration,
-                disk_over_commit, instance, host, topic=FLAGS.compute_topic)
+                disk_over_commit, instance, host)
 
 
 class HostAPI(base.Base):
@@ -2095,13 +2142,14 @@ class SecurityGroupAPI(base.Base):
 
         LOG.audit(_("Create Security Group %s"), name, context=context)
 
-        self.ensure_default(context)
-
-        if self.db.security_group_exists(context, context.project_id, name):
-            msg = _('Security group %s already exists') % name
-            self.raise_group_already_exists(msg)
-
         try:
+            self.ensure_default(context)
+
+            if self.db.security_group_exists(context,
+                                             context.project_id, name):
+                msg = _('Security group %s already exists') % name
+                self.raise_group_already_exists(msg)
+
             group = {'user_id': context.user_id,
                      'project_id': context.project_id,
                      'name': name,

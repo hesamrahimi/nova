@@ -1762,7 +1762,7 @@ class LibvirtConnTestCase(test.TestCase):
         conn._check_shared_storage_test_file("file").AndReturn(True)
 
         self.mox.ReplayAll()
-        self.assertRaises(exception.InvalidSharedStorage,
+        self.assertRaises(exception.InvalidLocalStorage,
                           conn.check_can_live_migrate_source,
                           self.context, instance_ref, dest_check_data)
 
@@ -1810,9 +1810,9 @@ class LibvirtConnTestCase(test.TestCase):
                 return vdmock
 
         self.create_fake_libvirt_mock(lookupByName=fake_lookup)
-        self.mox.StubOutWithMock(self.compute, "rollback_live_migration")
-        self.compute.rollback_live_migration(self.context, instance_ref,
-                                            'dest', False)
+        self.mox.StubOutWithMock(self.compute, "_rollback_live_migration")
+        self.compute._rollback_live_migration(self.context, instance_ref,
+                                              'dest', False)
 
         #start test
         self.mox.ReplayAll()
@@ -1820,7 +1820,7 @@ class LibvirtConnTestCase(test.TestCase):
         self.assertRaises(libvirt.libvirtError,
                       conn._live_migration,
                       self.context, instance_ref, 'dest', False,
-                      self.compute.rollback_live_migration)
+                      self.compute._rollback_live_migration)
 
         instance_ref = db.instance_get(self.context, instance_ref['id'])
         self.assertTrue(instance_ref['vm_state'] == vm_states.ACTIVE)
@@ -1882,8 +1882,8 @@ class LibvirtConnTestCase(test.TestCase):
             # large disk space.
             self.mox.StubOutWithMock(imagebackend.Image, 'cache')
             imagebackend.Image.cache(context=mox.IgnoreArg(),
-                                     fn=mox.IgnoreArg(),
-                                     fname='otherdisk',
+                                     fetch_func=mox.IgnoreArg(),
+                                     filename='otherdisk',
                                      image_id=123456,
                                      project_id='fake',
                                      size=10737418240L,
@@ -2279,7 +2279,6 @@ class LibvirtConnTestCase(test.TestCase):
 
         want = {"vendor": "AMD",
                 "features": ["extapic", "3dnow"],
-                "permitted_instance_types": ["x86_64", "i686"],
                 "model": "Opteron_G4",
                 "arch": "x86_64",
                 "topology": {"cores": 2, "threads": 1, "sockets": 4}}
@@ -3393,12 +3392,6 @@ disk size: 4.4M''', ''))
 
         libvirt_utils.mkfs('ext4', '/my/block/dev')
         libvirt_utils.mkfs('swap', '/my/swap/block/dev')
-
-    def test_ensure_tree(self):
-        with utils.tempdir() as tmpdir:
-            testdir = '%s/foo/bar/baz' % (tmpdir,)
-            libvirt_utils.ensure_tree(testdir)
-            self.assertTrue(os.path.isdir(testdir))
 
     def test_write_to_file(self):
         dst_fd, dst_path = tempfile.mkstemp()
