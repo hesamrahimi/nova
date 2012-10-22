@@ -530,11 +530,11 @@ def virtual_interface_get_by_instance(context, instance_id):
 
 
 def virtual_interface_get_by_instance_and_network(context, instance_id,
-                                                           network_id):
+                                                           network_id, address=None):
     """Gets all virtual interfaces for instance."""
     return IMPL.virtual_interface_get_by_instance_and_network(context,
                                                               instance_id,
-                                                              network_id)
+                                                              network_id, address)
 
 
 def virtual_interface_delete(context, vif_id):

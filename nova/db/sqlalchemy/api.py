@@ -1341,11 +1341,18 @@ def virtual_interface_get_by_instance(context, instance_uuid):
 
 @require_context
 def virtual_interface_get_by_instance_and_network(context, instance_uuid,
-                                                  network_id):
+                                                  network_id, address=None):
     """Gets virtual interface for instance that's associated with network."""
-    vif_ref = _virtual_interface_query(context).\
+    if address is None:
+         vif_ref = _virtual_interface_query(context).\
                       filter_by(instance_uuid=instance_uuid).\
                       filter_by(network_id=network_id).\
+                      first()
+    else:
+         vif_ref = _virtual_interface_query(context).\
+                      filter_by(instance_uuid=instance_uuid).\
+                      filter_by(network_id=network_id).\
+                      filter_by(address=address).\
                       first()
     return vif_ref
 

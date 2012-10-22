@@ -644,12 +644,12 @@ class Controller(wsgi.Controller):
                     # check if the network id is already present in the list,
                     # we don't want duplicate networks to be passed
                     # at the boot time
-                    for id, ip in networks:
-                        if id == network_uuid:
-                            expl = (_("Duplicate networks"
-                                      " (%s) are not allowed") %
-                                    network_uuid)
-                            raise exc.HTTPBadRequest(explanation=expl)
+                    #for id, ip in networks:
+                    #    if id == network_uuid:
+                    #        expl = (_("Duplicate networks"
+                    #                  " (%s) are not allowed") %
+                    #                network_uuid)
+                    #        raise exc.HTTPBadRequest(explanation=expl)
                     networks.append((network_uuid, address))
             except KeyError as key:
                 expl = _('Bad network format: missing %s') % key
